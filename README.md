@@ -1,6 +1,7 @@
 # BlogArticle
 
 record study notes
+[Blog](http://schnappi.games/)
 
 ## Sort
 
