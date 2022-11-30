@@ -1,4 +1,4 @@
-# git config
+# git 使用
 
 ## ssh and https
 

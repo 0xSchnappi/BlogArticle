@@ -1,4 +1,4 @@
-# GDB
+# GDB使用
 
 ## How to debug programs with "sudo" in VSCODE
 
