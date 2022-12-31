@@ -66,11 +66,50 @@
 >   > 
 >   > 
 
+## KiBreakpointTrapShadow
+
+```c++
+__int64 KiBreakpointTrapShadow()
+{
+  unsigned __int64 v0; // rsi
+  char v4; // [rsp-20h] [rbp-20h]
+
+  if ( (v4 & 1) != 0 )
+  {
+    __asm { swapgs }
+    v0 = KeGetPcr()->Prcb.KernelDirectoryTableBase;
+    if ( !_bittest(MK_FP(__GS__, 0x7018i64), 1u) )// gs[7018] _KPCR.Prcb.ShadowFlags 第1位为0 为普通权限进程 切换CR3
+      __writecr3(v0);                           // 将内核CR3写入KernelDirectoryTableBase
+  }
+  return KiBreakpointTrap();
+}
+
+
+```
+
+> 先执行swapgs，进行cr3切换（IA32_GS_BASE和IA32_KERNEL_GS_BASE交换）
+>
+> 会将PCB.DirectoryTableBase写入PRCB.KernelDirectoryTableBase，也就是前面看到的GS[0x7000]位置；并会依据KPROCESS->AddressPolicy来设置ShadowFlags（GS[0x7018]）, KPROCESS->AddressPolicy在进程创建时依据进程是否由管理员身份启动而设置（NtCreateProcess->PspAllocateThread->PspUserThreadStartup->PspDisablePrimaryTokenExchange->SeTokenIsAdmin/SecureHandle->Process->Pcb.AddressPolicy = 1），如果是管理员进程，则KPROCESS->AddressPolicy为1，ShadowFlags会被设置为2，若是普通进程，则ShadowFlags为1。 在中断发生时，会依据ShadowFlags判断是否要切换CR3到PCB.DirectoryTableBase。PCB.DirectoryTableBase中映射了内核内存，而PCB.UserDirectoryTableBase没有映射内核内存，而非特权级应用程序在三环中使用的时UserDirectoryTableBase，只有在中断时才会被切换到DirectoryTableBase从而达到内核页表隔离的目的。
+
 ## lfence
 
 > Specifically, LFENCE does not execute until all prior（先前的，较早的） instructions have completed locally, and no later instruction begins execution until LFENCE inparticular completes. 
-> 
+>
 > Instructions following an LFENCE may be fetched（取） from memory before the LFENCE, but they will not execute (even speculatively) （推测执行）until the LFENCE completes.
+
+```assembly
+.text:000000014004A86E                 jz      loc_14017CF15
+.text:000000014004A874                 movzx   ecx, word ptr [rbx+4]
+.text:000000014004A878                 mov     eax, cs:KeNumberProcessors_0
+.text:000000014004A87E                 cmp     ecx, eax
+.text:000000014004A880                 jnb     loc_14017CF23
+.text:000000014004A886                 lfence
+.text:000000014004A889                 lea     r9, KiProcessorBlock
+.text:000000014004A890                 mov     eax, ecx
+.text:000000014004A892                 mov     r9, [r9+rcx*8]
+```
+
+> lfence会存在与Jcc后面，阻止推测执行
 
 ## PspSystemThreadStartup
 
