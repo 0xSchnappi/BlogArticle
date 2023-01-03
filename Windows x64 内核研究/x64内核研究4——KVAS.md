@@ -1,6 +1,12 @@
 [toc]
 
-# x64内核研究4——KPTI
+# x64内核研究4——KVAS
+
+内核虚拟地址影子（Kernel Virtual Address Shadow，由微软提出的一个术语，简称KVAS），类似于Linux上的KPTI（Kernel page-table isolation）内核页表隔离机制，即把进程页表按照成用户态、内核态独立的分割成两份，为了杜绝用户态通过一些旁路漏洞来窃取内核态的数据。KVAS在Windows10/11上是默认开启的。
+
+如果开启KVAS的话，应用程序会有两个CR3，即有PCB.DirectoryTableBase和PCB.UserDirectoryTableBase两个域。其中DirectoryTableBase域可以理解为内核CR3，能够访问内核物理页，而三环的Cr3（UserDirectoryTableBase）只映射了内核的KVASCODE区段的物理页（少数r3进入r0的入口），而没有映射其他区段的，因此通过3环的Cr3寻找内核TEXT段的物理页，最多只能找到PPE，而从PDE开始就没有映射了。
+
+KVAS实现的本质就是内核使用Shadow函数类似于动态库中的stub函数一样，只是一个简单的跳转函数而已，没有实质功能。Windows实现KVAS的效果就是，用户进程访问不到内核的重要函数、数据等，实现这一功能主要是由CR3，之前用户进程能访问到内核的原因是，内核和用户进程共用一个CR3，通过这个CR3的和页映射关系即可访问到内核。现在Windows使用两个CR3，用户CR3和内核CR3，用户CR3只能访问用户进程和内核Shadow函数，无法访问真正的内核函数，只有通过内核CR3才能访问到真正的内核函数。
 
 ## 工具介绍
 
@@ -32,7 +38,7 @@
   >
   >   
 
-## KPTI 存在形式
+## KVAS存在形式
 
 - 简介
 
@@ -180,11 +186,64 @@
 
 - int3 中断分析
 
-```shell
+  ```assembly
+  KVASCODE:000000014034D280 KiBreakpointTrapShadow proc near
+  KVASCODE:000000014034D280                 test    byte ptr [rsp+8], 1
+  KVASCODE:000000014034D285                 jz      short loc_14034D2E6
+  KVASCODE:000000014034D287                 swapgs
+  KVASCODE:000000014034D28A                 bt      dword ptr gs:7018h, 1
+  KVASCODE:000000014034D294                 jb      short loc_14034D2A2
+  KVASCODE:000000014034D296                 mov     rsp, gs:7000h
+  KVASCODE:000000014034D29F                 mov     cr3, rsp
+  KVASCODE:000000014034D2A2
+  KVASCODE:000000014034D2A2 loc_14034D2A2:                          ; CODE XREF: KiBreakpointTrapShadow+14↑j
+  KVASCODE:000000014034D2A2                 mov     rsp, gs:7008h
+  KVASCODE:000000014034D2AB                 mov     gs:10h, rsi
+  KVASCODE:000000014034D2B4                 mov     rsi, gs:38h
+  KVASCODE:000000014034D2BD                 add     rsi, 4200h
+  KVASCODE:000000014034D2C4                 push    qword ptr [rsi-8]
+  KVASCODE:000000014034D2C7                 push    qword ptr [rsi-10h]
+  KVASCODE:000000014034D2CA                 push    qword ptr [rsi-18h]
+  KVASCODE:000000014034D2CD                 push    qword ptr [rsi-20h]
+  KVASCODE:000000014034D2D0                 push    qword ptr [rsi-28h]
+  KVASCODE:000000014034D2D3                 mov     rsi, gs:10h
+  KVASCODE:000000014034D2DC                 and     qword ptr gs:10h, 0
+  KVASCODE:000000014034D2E6
+  KVASCODE:000000014034D2E6 loc_14034D2E6:                          ; CODE XREF: KiBreakpointTrapShadow+5↑j
+  KVASCODE:000000014034D2E6                 jmp     KiBreakpointTrap
+  ```
 
-```
+  
 
 
+
+- 硬件补丁
+
+  ```assembly
+  .text:00000001401C7DC0 KiBreakpointTrap proc near              ; CODE XREF: KiBreakpointTrapShadow:loc_14034D2E6↓j
+  .text:00000001401C7DC0                                         ; DATA XREF: .pdata:0000000140523874↓o ...
+  .text:00000001401C7DC0
+  .text:00000001401C7DC0                 sub     rsp, 8
+  .text:00000001401C7DC4                 push    rbp
+  .text:00000001401C7DC5                 sub     rsp, 158h
+  .text:00000001401C7DCC                 lea     rbp, [rsp+80h]
+  .text:00000001401C7DD4                 mov     [rbp+0E8h+var_13D], 1
+  .text:00000001401C7DD8                 mov     [rbp+0E8h+var_138], rax
+  .text:00000001401C7DDC                 mov     [rbp+0E8h+var_130], rcx
+  .text:00000001401C7DE0                 mov     [rbp+0E8h+var_128], rdx
+  .text:00000001401C7DE4                 mov     [rbp+0E8h+var_120], r8
+  .text:00000001401C7DE8                 mov     [rbp+0E8h+var_118], r9
+  .text:00000001401C7DEC                 mov     [rbp+0E8h+var_110], r10
+  .text:00000001401C7DF0                 mov     [rbp+0E8h+var_108], r11
+  .text:00000001401C7DF4                 test    [rbp+0E8h+arg_0], 1
+  .text:00000001401C7DFB                 jnz     short loc_1401C7E27
+  .text:00000001401C7DFD                 test    byte ptr gs:278h, 1
+  .text:00000001401C7E06                 jnz     short loc_1401C7E10
+  .text:00000001401C7E08                 lfence
+  .text:00000001401C7E0B                 jmp     loc_1401C8069
+  ```
+
+  
 
 ## 参考文献
 
