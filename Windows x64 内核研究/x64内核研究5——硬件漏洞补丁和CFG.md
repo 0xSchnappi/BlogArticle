@@ -1,3 +1,5 @@
+[toc]
+
 # x64内核研究5——硬件漏洞补丁和CFG
 
 ## 关键字
@@ -109,7 +111,103 @@ __int64 KiBreakpointTrapShadow()
 .text:000000014004A892                 mov     r9, [r9+rcx*8]
 ```
 
-> lfence会存在与Jcc后面，阻止推测执行
+> lfence会存在Jcc后面，目的就是为了阻止推测执行，只有执行完lfence指令前的所有指令，才能执行lfence后面的指令
+
+## Control Flow Guard （控制流防护）
+
+### 开启方式
+
+- 编译选项
+
+  1. vs编译器[编译选项设置](https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard)
+
+  2. 编译选项不兼容
+
+     ![](https://blog-1308247953.cos.ap-chengdu.myqcloud.com/blog/20230103200204.png)
+
+     ![](https://blog-1308247953.cos.ap-chengdu.myqcloud.com/blog/20230103200320.png)
+
+     > 将调试信息格式设置为无
+
+- dumpbin检查
+
+  ```shell
+  dumpbin /headers /loadconfig CFGtest.exe
+  ```
+
+  ![](https://blog-1308247953.cos.ap-chengdu.myqcloud.com/blog/image-20230103194207530.png)
+
+  > #####  DLL Characteristics
+  >
+  > The following values are defined for the DllCharacteristics field of the optional header.
+  >
+  > | Constant                          | Value  | Description                        |
+  > | --------------------------------- | ------ | ---------------------------------- |
+  > | IMAGE_DLLCHARACTERISTICS_GUARD_CF | 0x4000 | Image supports Control Flow Guard. |
+
+  ![](https://blog-1308247953.cos.ap-chengdu.myqcloud.com/blog/image-20230103195415934.png)
+
+  > - Guard CF address of check-function pointer：_guard_check_icall_fptr的地址，在调试的时候可以发现它其实是指向ntdll!LdrpValidateUserCallTarget。
+  > - Guard CF address of dispatch-function pointer：在VS2015编译出来上是个保留字段，直译是保护调度函数指针，在IDA中可看到代码就一句 jmp rax 。
+  > -  Guard CF function table： RVA列表的指针，其包含了程序的代码。每个函数的RVA将转化为 CFGBitmap中的“1”位。CFGBitmap 的位信息来自Guard CF function table。
+  > -  Guard CF function count： RVA的个数。
+
+- IDA查看
+
+  - 未开启CFG
+
+    ![](https://blog-1308247953.cos.ap-chengdu.myqcloud.com/blog/image-20230103201755517.png)
+
+    > 未开启CFG时，直接调用函数指针，调用函数。
+
+  - 开启CFG
+
+    ![](https://blog-1308247953.cos.ap-chengdu.myqcloud.com/blog/image-20230103202021533.png)
+
+    > 开启CFG后，在调用函数指针时，
+    >
+    > 1. 将函数指针作为`__guard_dispatch_icall_fptr`函数的参数，
+    > 2. 调用`__guard_dispatch_icall_fptr`函数进行地址合法行检查
+    > 3. 调用`j___RTC_CheckEsp`函数，对函数栈进行检查
+    > 4. 最后才是通过函数指针调用函数
+
+### 代码
+
+```c++
+#include <iostream>
+
+typedef int(*fun_t)(int);
+
+int foo(int a)
+{
+    printf("hellow world %d\n", a);
+    return a;
+}
+class CTargetObject
+{
+public:
+    fun_t fun;
+};
+int main()
+{
+    int i = 0;
+    CTargetObject* o_array = new CTargetObject[5];
+    for (i = 0; i < 5; i++)
+        o_array[i].fun = foo;
+    o_array[0].fun(1);
+    return 0;
+}
+```
+
+> 通过函数指针调用函数，然后通过反汇编可执行文件查看开启CFG前后的区别。
+
+### 原理
+
+### 动态调试
+
+
+
+
 
 ## PspSystemThreadStartup
 
