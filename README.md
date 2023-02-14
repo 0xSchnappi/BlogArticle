@@ -27,6 +27,12 @@ record study notes
 
 ## TODO
 
+### 虚拟化/KVM实战————原理、进阶与性能调优（更新中）
+
+- 第一章 虚拟化简介
+- 第二章 构建KVM环境
+- 第三章 KVM原理介绍
+
 ### Windows x64 内核研究（更新中）
 
 - x64内核研究1——IA-32e模式
@@ -39,7 +45,7 @@ record study notes
 - MacOS架构介绍
 - MacOS系列文章描述指南
 
-### Android
+### Android （更新中）
 
 - APK文件格式
 
@@ -52,6 +58,12 @@ record study notes
 - gdb
 - git 使用
 - QEMU 管理虚拟机
+
+## 设计模式
+
+- 创建型模式
+  - 工厂方法
+- 
 
 ### Python高阶 (未开启)
 

@@ -203,19 +203,87 @@ int main()
 
 ### 原理
 
+> 简单的总结一下，相当于对用户层的函数做了一个函数地址表，当你使用函数指针时就会通过地址翻译去在这个表里去校验这个指针，如果没有找到该指针对应的地址，则判定为无效，如果能找到，则为有效。
+
 ### 动态调试
 
+![image-20230106094700775](C:\Users\hantong\AppData\Roaming\Typora\typora-user-images\image-20230106094700775.png)
+
+![image-20230106094755183](C:\Users\hantong\AppData\Roaming\Typora\typora-user-images\image-20230106094755183.png)
+
+```assembly
+0:000> r ecx
+ecx=00f41360
+0:000> u 00f41360
+CFGtest!ILT+848(?fooYAHHZ):
+00f41360 e90b0f0000      jmp     CFGtest!foo (00f42270)
+00f41365 cc              int     3
+
+Evaluate expression:
+  Hex:     00f41360
+  Decimal: 15995744
+  Octal:   00075011540
+  Binary:  00000000 11110100 00010011 01100000
+  Chars:   ...`
+  Time:    Sun Jul  5 11:15:44 1970
+  Float:   low 2.24148e-038 high 0
+  Double:  7.90295e-317
+  
+ntdll!LdrpValidateUserCallTarget:
+77c189f0 8b150093cb77    mov     edx,dword ptr [ntdll!LdrSystemDllInitBlock+0xb8 (77cb9300)]
+77c189f6 8bc1            mov     eax,ecx
+77c189f8 c1e808          shr     eax,8
+0:000> r edx
+edx=00f60000
+0:000> r eax
+eax=0000f413
+;CFG bitmap 基址 ntdll!LdrSystemDllInitBlock+0xb8 (77cb9300)
+;取地址的高3字节通过CFG bitmap 基址进行获取校验值
+ntdll!LdrpValidateUserCallTargetBitMapCheck:
+77c189fb 8b1482          mov     edx,dword ptr [edx+eax*4]
+0:000> r edx
+edx=00041040
+
+77c189fe 8bc1            mov     eax,ecx
+77c18a00 c1e803          shr     eax,3
+0:000> r eax
+eax=001e826c
+0:000> .formats 001e826c
+Evaluate expression:
+  Hex:     001e826c
+  Decimal: 1999468
+  Octal:   00007501154
+  Binary:  00000000 00011110 10000010 01101100
+  Chars:   ...l
+  Time:    Sat Jan 24 11:24:28 1970
+  Float:   low 2.80185e-039 high 0
+  Double:  9.87868e-318
+0:000> .formats 00041040
+
+77c18a03 f6c10f          test    cl,0Fh
+0:000> r cl
+cl=60
+
+77c18a06 7506            jne     ntdll!LdrpValidateUserCallTargetBitMapRet+0x1 (77c18a0e)
+77c18a08 0fa3c2          bt      edx,eax
+77c18a0b 730a            jae     ntdll!LdrpValidateUserCallTargetBitMapRet+0xa (77c18a17)
+ntdll!LdrpValidateUserCallTargetBitMapRet:
+77c18a0d c3              ret
 
 
+Evaluate expression:
+  Hex:     00041040
+  Decimal: 266304
+  Octal:   00001010100
+  Binary:  00000000 00000100 00010000 01000000
+  Chars:   ...@
+  Time:    Sun Jan  4 09:58:24 1970
+  Float:   low 3.73171e-040 high 0
+  Double:  1.31572e-318
 
-
-## PspSystemThreadStartup
-
-### _guard_dispatch_icall
-
-```shell
-0x9090d0ff
 ```
+
+> 
 
 ### retpoline
 
