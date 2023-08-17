@@ -1,6 +1,6 @@
 [toc]
 
-# 第四章 KVM 管理工具
+# 第四章 KVM 管理工具——libvirt
 
 # libvirt
 
@@ -425,25 +425,648 @@ libvirtd是一个可执行程序，不仅可以使用“systemctl”命令调用
 
 ### 存储配置
 
+```xml
+<device>
+    <disk type='file' device='disk'>
+        <driver name='qemu' type='qcow2' cache='none'/>
+        <source file='/var/lib/libvirt/images/centos7u2.qcow2'/>
+        <target dev='vda' bus='virtio'/>
+        <address type='pci' domain='0x0000' bus='0x00' slot='0x07' function='0x0'/>
+    </disk>
+</device>
+```
+
+> 表示使用`qcow2`格式的`centos7u2.qcow`镜像文件作为客户机的磁盘，其在客户机中使用`virtio`总线（使用`virtio-blk`驱动），设备名称为`/dev/vda`，其PCI地址为`0000:00:07.0`
+>
+> - `<disk>`属性
+>
+>   > 1. `type`：属性表示磁盘使用哪种类型作为磁盘的来源，其取值为file、block、dir、或network中的一个，分别表示使用文件、块设备、目录或网络作为客户机磁盘来源。
+>   > 2. `device`：属性表示让客户机如何使用该块设备，其取值为floppy、disk、cdrom或lun中的一个，分别为软盘、硬盘、光盘和LUN（逻辑单元号），默认值为disk（硬盘）
+>
+> - `<disk>`子标签
+>
+>   > driver用于定义Hypervisor如何为该磁盘提供驱动，它的name属性用于指定宿主机中使用的后端驱动名称，QEMU/KVM仅支持name='qemu'，但是支持的类型type可以是很多，包括raw、qcow2、qed、bochs等。cache属性表示在宿主机中打开该磁盘是使用的缓存方式，可以配置为default、none、writethrough、writeback、directsync和unsafe等多种模式。
+>
+> - `<source>`子标签
+>
+>   > 表示磁盘的来源
+>   >
+>   > 1. 当<disk>标签的type属性为file时，应该配置为<source file='/var/lib/libvirt/images/centos7u2.qcow2'/>这样
+>   > 2. 当<disk>标签的type属性为block时，应该配置为<source dev='/dev/sda'/>这样
+>
+> - `<target>`
+>
+>   > 表示磁盘暴露给客户机时的总线类型和设备名称
+>   >
+>   > 1. dev属性表示客户机中该磁盘设备的逻辑设备名称
+>   > 2. bus属性表示该磁盘设备被模拟挂载的总线类型，bus属性的值可以为ide、scsi、virtio、usb、sata等
+>   >
+>   > 如果省略了bus属性，libvirt会根据dev属性中的名称来“推测”bus属性的值，例如，sda会被推测是scsi,而vda被推测是virtio.
+>
+> - `<address>`
+>
+>   > 表示磁盘设备在客户机中的PCI总线地址。如果该标签不存在，libvirt会自动分配一个地址。
+
 ### 其他配置
+
+1. QEMU 模拟器配置
+
+   ```xml
+   <device>
+       <emulator>/usr/local/bin/qemu-system-x86_64</emulator>
+   </device>
+   ```
+
+   > 需要指定使用的设备模型的模拟器，需要绝对路径。
+
+   ```xml
+   <type arch='x86_64' machine='pc'>hvm</type>
+   ```
+
+   > 自己编译的`qemu-system-x86_64`，这个配置必须为`machine='pc'`
+
+2. 图形显示方式
+
+   ```xml
+   <device>
+       <graphics type='vnc' port='-1' autoport='yes'/>
+   </device>
+   ```
+
+   > 表示通过VNC的方式连接到客户机，其VNC端口为libvirt自动分配
+
+   ```xml
+   <device>
+       <graphics type='sdl' display=':0.0'/>
+       <graphics type='vnc' port='5904'>
+           <listen type='address' address='1.2.3.4'/>
+       </graphics>
+       <graphics type='rdp' autoport='yes' multiUser='yes' />
+       <graphics type='desktop' fullscreen='yes' />
+       <graphics type='spice'>
+           <listen type='network' network='rednet'
+       </graphics>
+   </device>
+   ```
+
+   > 支持其他多种类型的图形显示方式，配置了SDL、VNC、RDP、SPICE等
+
+3. 客户机声卡和显卡的配置
+
+   ```xml
+   <device>
+       <sound model='ich6'>
+           <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>
+       </sound>
+       <video>
+           <model type='qxl' ram='65536'  vram='65536' vgamem='16384' heads='1'/>
+           <address type='pci' domain='0x0000' bus='0x00' slot-'0x02' function='0x0'/>
+       </video>
+   </device>
+   ```
+
+   > - <sound>表示的是声卡配置，model表示为客户机模拟的声卡类型，取值为es1370、sb16、ac97和ich6中的一个。
+   > - `<video>`表示显卡配置
+   > - <model>为客户机模拟的显卡类型
+   >   1. type属性的取值可以为vga、cirrus、vmvga、xen、vbox、qxl中的一个
+   >   2. vram属性表示虚拟显卡的显存容量（单位为KB）
+   >   3. heads属性表示显示屏幕的序号
+
+4. 串口和控制台
+
+   > 串口和控制台的主要用途，在调试客户机的内核或遇到客户机宕机的情况下，一般都可以在串口或控制台中查看一些利于系统管理员分析问题的日志信息。
+
+   ```xml
+   <device>
+       <serial type='pty'>
+           <target port='0'/>
+       </serial>
+       <console type='pty'>
+           <target type='serial' port='0'
+       </console>
+   </device>
+   ```
+
+   > 设置了客户机的编号为0的串口（即`/dev/ttyS0`），使宿主机的伪终端（pty），由于这里没有指定使用宿主机中的哪个虚拟终端，因此libvirt会自己选择一个空闲的虚拟机终端（可能为/dev/pts下的任意一个）。当然也可以加上`<source path='/dev/pts/1'/>`配置来明确指定使用宿主机中的哪一个虚拟终端。
+   >
+   > 通常情况下，控制台（console）配置在客户机中的类型为`serial`，此时，如果没有配置串口（serial），则会将控制台的配置复制到串口配置中，如果已经配置了串口，则libvirt会忽略控制台的配置项。
+
+5. 输入设备
+
+   ```xml
+   <device>
+       <input type='tablet' bus='usb'/>
+       <input type='mouse' bus='ps2'/>
+       <input type='keyboard' bus='ps2'/>
+   </device>
+   ```
+
+   > 配置会让QEMU模拟PS2接口的鼠标和键盘，还提供了tablet这种类型的设备，让光标可以在客户机获取绝对位置定位。
+
+6. PCI控制器
+
+   ```xml
+   <controller type='usb' index='0' model='ich9-ehcil'>
+       <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x07'/>
+   </controller>
+   <controller type='usb' index='0' model='ich9-ehcil'>
+       <master startport='0'/>
+       <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x0' multifunction='on'/>
+   </controller>
+   <controller type='usb' index='0' model='ich9-ehcil'>
+       <master startport='2'/>
+       <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x1'/>
+   </controller>
+   <controller type='usb' index='0' model='ich9-ehcil'>
+       <master startport='4'/>
+       <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x2'/>
+   </controller>
+   <controller type='pci' index='0' model='pci-root'/>
+   <controller type='virtio-serial' index='0' model='ich9-ehcil'>
+       <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x0'/>
+   </controller>
+   ```
+
+   > 显式指定了4个USB控制器、1个pci-root和1个virtio-serial控制器。libvirt默认还会为客户机分配一些必要的PCI设备，如PCI主桥（Host bridge）、ISA桥等。
 
 ## libvirt API简介
 
+- 连接Hypervisor相关的API
+
+  > 以virConnect开头的一系列函数，与Hypervisor建立连接
+
+  1. virConnectOpen
+
+     > 函数可以建立一个连接，返回值是一个virConnectPtr对象，该对象就代表到Hypervisor的一个连接；如果连接出错，则返回空值（NULL）。
+
+  2. virConnectOpenReadOnly
+
+     > 建立一个只读的连接，在该连接上可以使用一些查询的功能，而不使用创建、修改等功能。
+
+  3. virConnectOpenAuth
+
+     > 函数提供了根据认证建立的连接
+
+  4. virConnectGetCapabilities
+
+     > 函数返回对Hypervisor和驱动的功能描述的XML格式的字符串。
+
+  5. virConnectListDomains
+
+     > 函数返回一列与标识符，他们代表该Hypervisor上的活动域。
+
+- 域管理的API
+
+  > 以virDomainPtr开头的一系列函数，获取域对象
+
+  1. 获取域的对象
+
+     > `virDomainLookupByID`、`virDomainLookupByUUID`、`virDomainLookupByName`：
+     >
+     > 函数根据ID、UUID、Name值到conn这个连接上去查找相应的域
+
+  2. 查询域的信息
+
+     > `virDomainGetHostname`,`virDomainGetInfo`,`virDomainGetVcpus`,`virDomainGetVcpusFlags`,`virDomainGetCPUStats`等
+
+  3. 控制域的生命周期
+
+     > `virDomainCreate`,`virDomainSuspend`,`virDomainResume`,`virDomainDestroy`,`virDomainMigrate`等
+
+- 节点管理的API
+
+  > 以virNode开头的一系列函数，对节点进行信息查询和控制功能
+
+  1. virNodeGetInfo
+
+     > 获取节点的物理硬件信息
+
+  2. virNodeGetCPUStats
+
+     > 可以获取节点上各个CPU的使用统计信息
+
+  3. virNodeGetMemoryStats
+
+     > 函数可以获取节点上的内存的使用统计信息
+
+  4. virNodeGetFreeMemory
+
+     > 函数可以获取节点上可用的空闲内存大小
+
+  5. virNodeSetMemoryParameters
+
+     > 函数可以设置节点上内存的调度参数
+
+  6. virNodeSuspendForDuration
+
+     > 函数可以让节点（宿主机）暂停运行一段时间
+
+- 网络管理的API
+
+  > 以virNetwork开头的一系列函数和部分以virInterface开头的函数，查询和控制虚拟网络。
+
+  1. virNetworkGetName
+
+     > 获取网络名称
+
+  2. virNetworkGetBridgeName
+
+     > 获取网络中网桥的名称
+
+  3. virNetworkGetUUID
+
+     > 获取网络的UUID标识
+
+  4. virNetworkGetXMLDesc
+
+     > 获取网络的以XML格式的描述
+
+  5. virNetworkIsActive
+
+     > 网络是否正在使用
+
+  6. virNetworkCreareXML
+
+     > 根据提供的XML格式的字符串创建一个网络
+
+  7. virNetworkDestroy
+
+     > 函数可以销毁一个网络（同时也会关闭使用该网络的域）
+
+  8. virNetworkFree
+
+     > 函数可以回收一个网络（但不会关闭正在运行的域）
+
+  9. virNetworkUpdate
+
+     > 根据提供XML格式的网络配置来更新一个已存在的网络。
+
+  10. virInterface
+
+      > virInterfaceCreate、virInterfaceFree、virInterfaceDestroy、virInterfaceGetName、virInterfaceIsActive等函数可以用于创建、释放和销毁网络接口，以及查询网络接口的名称和激活状态。
+
+- 存储卷管理的API
+
+  > 以virStorageVol开头的一系列函数，主要是对域的镜像文件管理，
+  >
+  > 获取存储卷对象：
+
+  1. virStorageVolLookupByKey
+
+     > 根据全局唯一的键值来获取一个存储卷对象
+
+  2. virStorageVolLookupByName
+
+     > 根据名称在一个存储资源池（storage pool）中获取一个存储卷对象
+
+  3. virStorageVolLookupByPath
+
+     > 根据它在节点上路径来获取一个存储卷对象
+
+  > 查询存储卷信息：
+
+  1. virStorageVolGetName
+
+     > 查询某个存储卷的使用情况
+
+  2. virStorageVolGetName
+
+     > 获取存储卷的名称
+
+  3. virStorageVolGetPath
+
+     > 获取存储卷路径
+
+  4. virStorageVolGetConnect
+
+     > 查询存储卷的连接
+
+  > 创建和修改存储卷：
+
+  1. virStorageVolCreateXML
+
+     > 根据提供的XML描述来创建一个存储卷
+
+  2. virStorageVolFree
+
+     > 释放存储卷的句柄（但是存储卷依然存在）
+
+  3. virStorageVolDelete
+
+     > 删除一个存储卷
+
+  4. virStorageVolResize
+
+     > 可以调整存储卷的大小
+
+- 存储池管理的API
+
+  > 以virStoragePool开头的一系列函数。
+  >
+  > libvirt对存储池（pool）的管理包括对本地的基本文件系统、普通网络共享文件系统、iSCSI共享文件系统、LVM分区等的管理
+  >
+  > | 函数名                       | 描述                                                         |
+  > | ---------------------------- | ------------------------------------------------------------ |
+  > | virStoragePoolLookupByName   | 根据存储池的名称来获取一个存储池对象                         |
+  > | virStoragePoolLookupByVolume | 根据一个存储卷返回其对应的存储池对象                         |
+  > | virStoragePoolCreateXML      | 根据XML描述创建一个存储池（默认已激活）                      |
+  > | virStoragePoolDefineXML      | 根据XML描述静态定义一个存储池（尚未激活）                    |
+  > | virStoragePoolCreate         | 可以激活一个存储池                                           |
+  > | virStoragePoolGetInfo        | 获取存储池信息                                               |
+  > | virStoragePoolGetName        | 获取存储池名称                                               |
+  > | virStoragePoolGetUUID        | 获取存储池UUID                                               |
+  > | virStoragePoolIsActive       | 查询存储池状态是否处于使用中                                 |
+  > | virStoragePoolFree           | 函数可以释放存储池相关的内存（但是不改变其在宿主机中的状态） |
+  > | virStoragePoolDestroy        | 用于销毁一个存储池（但并没有释放virStoragePoolPtr对象，之后还可以用virStoragePoolCreate函数重新激活） |
+  > | virStoragePoolDelete         | 物理删除一个存储池资源（该操作不可恢复）                     |
+  >
+  > 
+
+- 事件管理的API
+
+  > 以virEvent开头的函数。
+  >
+  > libvirt支持事件机制，在使用该机制注册之后，可以在发生特定的事件（如域的启动、暂停、恢复、停止等）时得到自己定义的 一些通知
+
+- 数据流管理的API
+
+  > 以virStream开头的函数
+  >
+  > libvirt提供了一系列函数用于数据流传输
+
 ## 建立到 Hypervisor的连接
+
+URI（Uniform Resource Identifier）统一资源标识符
 
 ### 本地 URI
 
+```shell
+driver[+transport]:///[path][?extral-param]
+```
+
+> driver是连接Hypervisor驱动名称（如qemu、xen、xbox、lxe等）
+>
+> transport选择该连接使用的传输方式
+>
+> path连接到服务器端上的某个路径
+>
+> ?extral=param是可以额外添加一些参数（如Unix domain sockect的路径）
+
+- qemu:///session：连接到本地的session实例，该连接仅能管理当前用户的虚拟化资源
+- qemu+unix:///session：以Unix domain sockert的方式连接到本地的session实例，该连接仅能管理当前用户的虚拟化资源
+- qemu:///system：连接到本地的system实例，该连接能管理当前节点的所有特权用户可以管理虚拟化资源
+- qemu+unix:///system：以Unix domain sockert的方式连接到本地的system实例，该连接能管理当前节点的所有特权用户可以管理虚拟化资源
+
 ### 远程 URI
+
+```shell
+driver[+transport]://[user@][host][:port]/[path][?extral-param]
+```
+
+> transport 表示传输方式，取值可以是ssh、tcp、libssh2等。
+
+- qemu+ssh://root@www.example.com/system：通过ssh通道连接到远程节点的system实例，具有最大的权限来管理远程节点上的虚拟化资源。建立该远程连接时，需要经过ssh的用户名和密码验证或者基于密钥的验证。
+- qemu+ssh://root@www.example.com/session：通过ssh通道连接到远程节点的使用user用户的session实例，该连接仅能对user用户的虚拟化资源进行管理。建立该远程连接时，同样需要经过ssh的验证。
+- qemu://example.com/system：通过建立加密的TLS连接与远程节点的system实例相连接，具有对节点的特权管理权限。在建立该远程连接时，一般需要经过TLSx509安全协议的证书验证。
+- qemu+tcp://example.com/system：通过建立非加密的普通TCP连接与远程节点的system实例相连接，具有对该节点的特权管理权限。在建立该远程连接时，一般需要经过SASL/Kerberos认证授权。
 
 ### 使用 URI 建立到 Hypervisor 的连接
 
+在使用virsh这个libvirt客户端工具时，可以用“-c”或“--connect”选项来指定建立到某个URI的连接。只有连接建立之后，才能操作。
+
+```shell
+# schnappi @ ASUS in ~ [16:21:21] 
+$ virsh -c qemu:///system
+Welcome to virsh, the virtualization interactive terminal.
+
+Type:  'help' for help with commands
+       'quit' to quit
+
+virsh # list
+ Id   Name           State
+------------------------------
+ 9    ubuntu_20_04   running
+
+virsh # quit
+
+```
+
 ## libvirt API 使用示例
+
+- `Ubuntu`安装 libvirt 动态库
+
+  ```shell
+  sudo apt-get install  libvirt-dev
+  ```
+
+- Ubuntu 安装 libvirt python 包
+
+  ```shell
+  sudo apt-get install python3-libvirt
+  ```
 
 ### libvirt 的 C API 使用
 
+```shell
+# schnappi @ ASUS in ~/Desktop/gist [18:34:53] 
+$ gcc -o dominfo dominfo.c -lvirt
+
+# schnappi @ ASUS in ~/Desktop/gist [18:34:57] 
+$ sudo virsh list                
+ Id   Name           State
+------------------------------
+ 1    ubuntu_20_04   running
+
+
+# schnappi @ ASUS in ~/Desktop/gist [18:35:01] 
+$ sudo ./dominfo 
+----Get domian info by ID via libvirt C API -----
+Domain ID: 1
+    vcpus: 5
+   maxMem: 8388608 KB
+   memory: 8388608 KB
+```
+
+> gcc 必须使用 `-lvirt`参数，否则会出现以下情况
+>
+> ```shell
+> # schnappi @ ASUS in ~/Desktop/gist [17:28:55] C:1
+> $ gcc dominfo.c
+> /usr/bin/ld: /tmp/cc29IerI.o: in function `getDomainInfo':
+> dominfo.c:(.text+0x34): undefined reference to `virConnectOpenReadOnly'
+> /usr/bin/ld: dominfo.c:(.text+0x7d): undefined reference to `virDomainLookupByID'
+> /usr/bin/ld: dominfo.c:(.text+0xb5): undefined reference to `virConnectClose'
+> /usr/bin/ld: dominfo.c:(.text+0xd2): undefined reference to `virDomainGetInfo'
+> /usr/bin/ld: dominfo.c:(.text+0x103): undefined reference to `virDomainFree'
+> /usr/bin/ld: dominfo.c:(.text+0x10f): undefined reference to `virConnectClose'
+> /usr/bin/ld: dominfo.c:(.text+0x198): undefined reference to `virDomainFree'
+> /usr/bin/ld: dominfo.c:(.text+0x1ab): undefined reference to `virConnectClose'
+> collect2: error: ld returned 1 exit status
+> ```
+>
+> 顺便问了以下chat-gpt：`-lvirt` 是一个编译选项，用于告诉编译器在链接时使用 `libvirt` 库。具体来说，`-l` 选项是告诉编译器链接一个库文件，`virt` 是库文件的名称。在编译时使用 `-lvirt` 选项后，编译器会在系统中查找 `libvirt` 库文件并将其链接到您的程序中。这样，您的程序就可以使用 `libvirt` 库中定义的函数和符号了。
+
+```c
+/**
+ * Get domain information via libvirt C API
+ * 
+*/
+
+#include <stdio.h>
+#include <libvirt/libvirt.h>
+#include <libvirt/libvirt-host.h>
+
+int getDomainInfo(int id)
+{
+    virConnectPtr conn = NULL;      /* the hypervisor connection */
+    virDomainPtr dom = NULL;        /* the domain being checked */
+    virDomainInfo info;             /* the information being fetched */
+
+    /* NULL means connect to local QEMU/KVM hypervisor */
+    conn = virConnectOpenReadOnly(NULL);
+    if (conn == NULL)
+    {
+        fprintf(stderr, "Failed to connect to hypervisor\n");
+        return 1;
+    }
+
+    /* Find the domain by its ID */
+    dom  = virDomainLookupByID(conn, id);
+    if (dom == NULL)
+    {
+        fprintf(stderr, "Failed to find Domain %d\n", id);
+        virConnectClose(conn);
+        return 1;
+    }
+
+    /*Get virDomainInfo structure of the domain */
+    if (virDomainGetInfo(dom, &info) < 0)
+    {
+        fprintf(stderr, "Failed to get information for Domain %d\n", id);
+        virDomainFree(dom);
+        virConnectClose(conn);
+        return 1;
+    }
+
+    /* Print some info of the domian */
+    printf("Domain ID: %d\n", id);
+    printf("    vcpus: %d\n", info.nrVirtCpu);
+    printf("   maxMem: %ld KB\n", info.maxMem);
+    printf("   memory: %ld KB\n", info.memory);
+
+    if (dom != NULL)
+    {
+        virDomainFree(dom);
+    }
+    if (conn != NULL)
+    {
+        virConnectClose(conn);
+    }
+
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    int dom_id = 1;
+    printf("----Get domian info by ID via libvirt C API -----\n");
+    getDomainInfo(dom_id);
+    return 0;
+}
+```
+
 ### libvirt 的 Python API 的使用 
 
+- 运行结果
 
+  ```shell
+  # schnappi @ ASUS in ~/Desktop/gist [19:14:36] 
+  $ sudo /bin/python3 /home/schnappi/Desktop/gist/libvirt-test.py
+  [sudo] schnappi 的密码： 
+  --- Get domian info via libvirt python API ---
+  ----- Connection is created successfully -----
+  
+  ----------- get doman info by name -----------
+  Dom id: 1      name: ubuntu_20_04
+  Dom state: [1, 1]
+  Dom info: [1, 8388608, 8388608, 5, 75680000000]
+  memory: 8192.0 MB
+  memory status: {'actual': 8388608, 'swap_in': 0, 'swap_out': 0, 'major_fault': 0, 'minor_fault': 0, 'unused': 7946384, 'available': 8072388, 'usable': 7816240, 'last_update': 1679394754, 'disk_caches': 90816, 'hugetlb_pgalloc': 0, 'hugetlb_pgfail': 0, 'rss': 1921536}
+  vCPUs: 5
+  
+  ------ get domain info by ID -----
+  Domain id is 1 ; Name is ubuntu_20_04
+  
+  Connection is closed
+  
+  ```
 
+- code
 
-
+  ```c++
+  #!/usr/bin/python3
+  # Get domian info via libvirt python API
+  # Tested with python3.10.6 and pythin3-libvirt 8.0.0 on aKVM host
+  
+  import libvirt
+  import sys
+  
+  def createConnection():
+      conn = libvirt.openReadOnly(None)
+      if not conn:
+          print('Failed to open connection to QEMU/KVM')
+          sys.exit(1)
+      else:
+          print('----- Connection is created successfully -----')
+          return conn
+      
+  def closeConnection(conn):
+      print("")
+      try:
+          conn.close()
+      except:
+          print("Failed to close the connection")
+          return 1
+      
+      print("Connection is closed")
+      
+  def getDomInfoByName(conn, name):
+      print("")
+      print("----------- get doman info by name -----------")
+      try:
+          dom = conn.lookupByName(name)
+      except:
+          print("Failed to find the domian with name '%s'" % name)
+          return 1
+      
+      print("Dom id: {0}      name: {1}".format(dom.ID(), dom.name()))
+      print("Dom state: {0}".format(dom.state(0)))
+      print("Dom info: {0}".format(dom.info()))
+      print("memory: {0} MB".format(dom.maxMemory()/1024))
+      print("memory status: {0}".format(dom.memoryStats()))
+      print("vCPUs: {0}".format(dom.maxVcpus()))
+      
+  def getDomInfoByID(conn, id):
+      print("")
+      print("------ get domain info by ID -----")
+      try:
+          dom = conn.lookupByID(id)
+      except:
+          print("Failed to find the domian with ID {0}".format(id))
+          return 1
+      
+      print("Domain id is {0} ; Name is {1}".format(dom.ID(), dom.name()))
+      
+      
+  if __name__ == "__main__":
+      name = "ubuntu_20_04"
+      id = 1
+      print("--- Get domian info via libvirt python API ---")
+      conn = createConnection()
+      
+      getDomInfoByName(conn, name)
+      getDomInfoByID(conn, id)
+      
+      closeConnection(conn)
+     
+  ```
