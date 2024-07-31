@@ -55,6 +55,6 @@
 
   ```shell
 
-  docker stop com
+  docker stop competent_einstein
 
   ```
