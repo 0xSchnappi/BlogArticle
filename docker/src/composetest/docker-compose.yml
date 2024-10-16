@@ -1,0 +1,9 @@
+# yaml 配置
+version: '3'
+services:
+  web:
+    build: .    # 指定为构建镜像上下文路径
+    ports:
+      - "5000:5000"
+  redis:
+    image: "redis:alpine"
